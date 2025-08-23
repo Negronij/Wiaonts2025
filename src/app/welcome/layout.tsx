@@ -1,4 +1,4 @@
-
+"use client";
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Home, User, Settings, Building } from 'lucide-react';
