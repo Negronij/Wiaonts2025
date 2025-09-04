@@ -1,5 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # Dependencies
 /node_modules
 /.pnp
@@ -19,7 +17,7 @@
 .DS_Store
 *.pem
 
-# Node Profiller Log Files
+# Node Profiler and generic log files
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -36,6 +34,7 @@ lerna-debug.log*
 
 # TypeScript cache
 *.tsbuildinfo
+next-env.d.ts
 
 # Studio temporary files
 .studio
