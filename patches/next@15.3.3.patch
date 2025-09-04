@@ -1,0 +1,573 @@
+diff --git a/node_modules/next/dist/build/webpack/plugins/app-route-runtime-entry-plugin.js b/node_modules/next/dist/build/webpack/plugins/app-route-runtime-entry-plugin.js
+index 9e9e170..0572b8c 100644
+--- a/node_modules/next/dist/build/webpack/plugins/app-route-runtime-entry-plugin.js
++++ b/node_modules/next/dist/build/webpack/plugins/app-route-runtime-entry-plugin.js
+@@ -37,6 +37,10 @@ class AppRouteRouteModuleLoader {
+     const { page , preferredRegion , middlewareConfig  } = JSON.parse(remaining.slice(1));
+     const pagePath = `app${page}`;
+     const isDynamic = isDynamicRoute(page);
++    if (page === '/favicon.ico') {
++        return `
++        export const dynamic = 'force-static'`;
++    }
+     // Ensure that the page module comes before the userland module.
+     const resolvedPagePath = (0, _path).join(this.appDir, pagePath);
+     // we need to use and ANY to allow this to be a userland module
+diff --git a/node_modules/next/dist/server/future/route-modules/app-route/module.compiled.js b/node_modules/next/dist/server/future/route-modules/app-route/module.compiled.js
+index 0370841..e2e21b2 100644
+--- a/node_modules/next/dist/server/future/route-modules/app-route/module.compiled.js
++++ b/node_modules/next/dist/server/future/route-modules/app-route/module.compiled.js
+@@ -522,6 +522,10 @@ var _ENTRIES = {};
+ const hoistMethods = [
+     "GET",
+     "POST",
+     "PUT",
+     "PATCH",
+     "DELETE",
+     "HEAD",
+     "OPTIONS"
+];
+async function getHandlers(userland) {
+    const handlers = {};
+    for (const method of hoistMethods){
+        const handler = userland[method];
+        if (typeof handler === "function") {
+            handlers[method] = handler;
+        }
+    }
+    return handlers;
+}
+function httpMethodToLog(method) {
+    return `\`${method}\``;
+}
+function stringifyMethods(methods) {
+    return methods.map(httpMethodToLog).join(", ");
+}
+function logAboutUnexpectedMethod(method, anr) {
+    const anrMethods = Object.keys(anr);
+    // If there are no methods exported from the userland module, then we'll
+    // inform the user about all the methods that are available.
+    if (anrMethods.length === 0) {
+        console.warn(`No HTTP methods exported in ${"`route.js`"}. Export one of the following methods: ${stringifyMethods(hoistMethods)}.`);
+        return;
+    }
+    // If the user has some methods exported, but not the one they're trying
+    // to use, then we'll inform them about the methods they have exported.
+    console.warn(`No \`${method}\` method exported in ${"`route.js`"}. Next.js router is not going to route requests with the method ${httpMethodToLog(method)}. See the available methods below: ${stringifyMethods(anrMethods)}.`);
+}
+async function getMethodHandler(handlers, method) {
+    const handler = handlers[method];
+    if (handler) return handler;
+    if (method === "HEAD") return handlers["GET"];
+    // If the "GET" handler is not defined, we can't use it for "HEAD" requests.
+    return;
+}
+function sendResponse(req, res, response) {
+    res.statusCode = response.status;
+    res.statusMessage = response.statusText;
+    response.headers.forEach((value, name)=>{
+        res.setHeader(name, value);
+    });
+    const body = response.body;
+    if (body) {
+        if (typeof body.pipe === "function") {
+            body.pipe(res);
+        } else {
+            res.end(body);
+        }
+    } else {
+        res.end();
+    }
+}
+function handleBadRequest() {
+    return new Response("Bad Request", {
+        status: 400
+    });
+}
+function handleInternalServerError() {
+    return new Response("Internal Server Error", {
+        status: 500
+    });
+}
+function getRequestConfig(userland) {
+    const methods = Object.keys(userland);
+    const hasAtLeastOneHttpMethod = methods.some((method)=>hoistMethods.includes(method));
+    if (!hasAtLeastOneHttpMethod) return;
+    return {
+        dynamic: userland.dynamic,
+        revalidate: userland.revalidate,
+        dynamicParams: userland.dynamicParams,
+        fetchCache: userland.fetchCache
+    };
+}
+function resolveHandlerError(err) {
+    if (err instanceof _noFallbackError.NoFallbackError) {
+        // This is a special case where we want to bubble up the error to the
+        // router.
+        return false;
+    } else if (err instanceof _bailoutToClientRendering.BailoutToClientRendering) {
+        // This is a special case that we want to ignore in this handler.
+        return true;
+    }
+    // If the error is not a Response object, we need to log it.
+    if (!(err instanceof Response)) {
+        // If this is a different error, we should log it.
+        console.error(err);
+    }
+    return true;
+}
+async function sendResponseResult(req, res, result, // This is the response that's sent to the user.
+response, // This is the response that's returned to the caller.
+options) {
+    var ref15, ref16;
+    // If the response is null, we should send a 404. This can happen if the
+    // user returns a `null` or `undefined` value from the handler.
+    if (!response) {
+        result.send(new _notFound.NotFoundResponse());
+        return;
+    }
+    // If the response is a string, we should send it as a text response.
+    if (typeof response === "string") {
+        result.send(new Response(response, {
+            headers: {
+                "Content-Type": "text/plain"
+            },
+            status: 200,
+            statusText: "OK"
+        }));
+        return;
+    }
+    if (!(response instanceof Response)) {
+        // If the response is not a Response object, then we should serialize it
+        // as JSON.
+        result.send(_response.NextResponse.json(response));
+        return;
+    }
+    // HEAD requests can't have bodies, so we just send the headers.
+    if (req.method === "HEAD") {
+        // If this is a HEAD request, we can't send a body, so we'll just send
+        // the headers.
+        const r = new Response(null, {
+            headers: response.headers,
+            status: response.status,
+            statusText: response.statusText
+        });
+        // We need to clone the response to ensure that we're not modifying the
+        // original response.
+        const tracked = trackResponse(r, options);
+        // We have to wait for the body to be consumed, because that's what will
+        // trigger the `cookies` and `headers` to be reconciled.
+        if (tracked.body) {
+            await (0, _bodyStream.consumeBody)(tracked.body);
+        }
+        // Send the response.
+        result.send(tracked);
+        return;
+    }
+    const contentType = (ref15 = response.headers.get("content-type")) == null ? void 0 : ref15.split(";")[0];
+    const isJSON = contentType === "application/json";
+    if (isJSON) {
+        // As a convenience, we will pretty print the JSON response in development
+        // if it's a JSON response.
+        if (true) {
+            try {
+                // We're using `json-from-stream` here because the body could be a
+                // stream, and we want to parse it as JSON. It will also handle the
+                // case where the body is already a string or a buffer.
+                const body = await (0, _bodyStream).getClonableBody)(response.body);
+                // We can't use `body.json()` here because that would consume the body.
+                // Instead, we'll load the JSON from the stream. We're using
+                // `json-from-stream` because we can't clone the body, so we have to
+                // do this twice.
+                const object = await (0, _jsonFromStream).default)(body.clone());
+                // Pretty print the JSON.
+                const json = JSON.stringify(object, null, 2);
+                // Send the response.
+                result.send(new Response(json, {
+                    headers: response.headers,
+                    status: response.status,
+                    statusText: response.statusText
+                }));
+                // We're done, so we can return.
+                return;
+            } catch (err) {
+            // If we failed to parse the JSON, then we'll just send the response
+            // as-is. This can happen if the response is not valid JSON, or if it's
+            // a stream that's already been consumed.
+            }
+        }
+    }
+    const isCachable = !((ref16 = response.headers.get("cache-control")) == null ? void 0 : ref16.includes("no-cache")) && !((ref16 = response.headers.get("cache-control")) == null ? void 0 : ref16.includes("no-store"));
+    // If the response is a redirect, we can't cache it.
+    if (response.status >= 300 && response.status < 400 && response.headers.has("location")) {
+        result.send(response);
+        return;
+    }
+    if (response.body && isCachable) {
+        const body = await (0, _bodyStream).getClonableBody)(response.body);
+        // We are buffering the stream in memory.
+        const buffer = await (0, _bodyStream).consumeBody)(body.clone());
+        result.send(new Response(buffer, {
+            headers: response.headers,
+            status: response.status,
+            statusText: response.statusText
+        }));
+        return;
+    }
+    result.send(response);
+}
+// This function is used to "track" the response, which means that it will
+// read the cookies and headers from the response and apply them to the
+// underlying response.
+function trackResponse(response, options) {
+    const onFinalize = (trackedResponse)=>{
+        if (options.headers) {
+            options.headers.apply(trackedResponse.headers);
+        }
+        if (options.cookies) {
+            options.cookies.apply(trackedResponse.headers);
+        }
+        if (options.requestCookies) {
+            options.requestCookies.apply(trackedResponse.headers);
+        }
+    };
+    // If the body is a stream, we need to wrap it in a new stream that will
+    // call the `onFinalize` function when the stream is finished.
+    if (response.body) {
+        let consumed = false;
+        const consume = ()=>{
+            if (consumed) return;
+            consumed = true;
+            onFinalize(response);
+        };
+        const body = new ReadableStream({
+            start (controller) {
+                const reader = response.body.getReader();
+                const pump = async ()=>{
+                    const { done , value  } = await reader.read();
+                    if (done) {
+                        consume();
+                        controller.close();
+                        return;
+                    }
+                    controller.enqueue(value);
+                    return pump();
+                };
+                // We have to start pumping the body immediately.
+                pump().catch((err)=>{
+                    // If the pump fails, we should close the controller.
+                    controller.error(err);
+                });
+            },
+            cancel (reason) {
+                response.body.cancel(reason);
+            }
+        });
+        // Return a new response with the wrapped body.
+        return new Response(body, {
+            headers: response.headers,
+            status: response.status,
+            statusText: response.statusText
+        });
+    }
+    // If there's no body, we can just call the `onFinalize` function
+    // immediately.
+    onFinalize(response);
+    // And then return the original response.
+    return response;
+}
+class AppRouteRouteModule extends _routeModule.RouteModule {
+    constructor({ userland , definition , resolvedPagePath , nextConfigOutput  }){
+        super({
+            userland,
+            definition
+        });
+        this.resolvedPagePath = resolvedPagePath;
+        this.nextConfigOutput = nextConfigOutput;
+    }
+    /**
+   * Resolves the request and returns a response.
+   *
+   * @param req the request object
+   * @param params the params from the route
+   * @returns the response
+   */ async handle(req, context) {
+        var ref18, ref19;
+        const { params , searchParams  } = context;
+        // Get the handlers for the userland module.
+        const handlers = await getHandlers(this.userland);
+        // Get the handler for the given method.
+        const handler = await getMethodHandler(handlers, req.method);
+        // If the handler is not defined, then we should log about it and return
+        // a 405 response.
+        if (!handler) {
+            logAboutUnexpectedMethod(req.method, handlers);
+            const response = new Response(null, {
+                status: 405
+            });
+            // We need to add the "Allow" header to the response.
+            response.headers.set("Allow", Object.keys(handlers).join(", "));
+            return response;
+        }
+        const requestConfig = getRequestConfig(this.userland);
+        // Create the context for the handler.
+        const handlerContext = {
+            params
+        };
+        // This is the parts of the URL that are not part of the route.
+        const url = new URL(req.url, "http://n");
+        // Create the request object.
+        const request = new _request.NextRequest(url, {
+            ...req,
+            // Per the spec, the formdata is not clonable, so we have to do this to
+            // preserve the body.
+            body: req.body ? req.body.tee()[0] : null
+        });
+        // We need to extend the context with the wait until and other context
+        // fields.
+        Object.assign(context, (0, _extends).default({
+        }, _context.requestStore.getStore(), {
+            params: (ref18 = context.params) != null ? ref18 : {}
+        }));
+        // We need to get the URL for the request.
+        const requestURL = new URL(req.url);
+        // Create the request context.
+        const requestContext = {
+            req: request,
+            url: requestURL
+        };
+        const requestCookies = new _cookies.RequestCookies(request.headers);
+        const mutableHeaders = new _headers.Headers(request.headers);
+        const responseCookies = new _cookies.ResponseCookies(new _headers.Headers());
+        const result = new _result.ResponseResult();
+        const responseCache = (0, _responseCache).default(this.nextConfigOutput === "export");
+        const options = {
+            requestCookies,
+            responseCookies,
+            mutableHeaders,
+            options: {
+                // We need to provide the correct configuration for the route.
+                ...requestConfig,
+                // We need to provide the definition for the route.
+                definition: this.definition
+            }
+        };
+        const res = await (0, _routeHandler).execute(requestContext, {
+            ...context,
+            searchParams: (ref19 = context.searchParams) != null ? ref19 : {},
+            cookies: requestCookies,
+            headers: new _headers.Headers(mutableHeaders)
+        }, async (proxyRequest)=>{
+            // We need to clone the request, because the handler can read the body,
+            // and we want to be able to log the body if the handler throws an
+            // error.
+            const clonableBody = (0, _bodyStream).getClonableBody)(proxyRequest.body);
+            try {
+                // Create a new request object with the cloned body.
+                const newReq = new _request.NextRequest(proxyRequest.url, {
+                    ...proxyRequest,
+                    body: clonableBody.clone(),
+                    headers: new _headers.Headers(mutableHeaders)
+                });
+                const response = await (0, _instrumentation.instrument)(handler.name, {
+                    spanName: `executing-app-route`,
+                    attributes: {
+                        "next.definition.name": this.definition.pathname
+                    }
+                }, ()=>handler(newReq, handlerContext));
+                await sendResponseResult(req, result, response, options);
+            } catch (err) {
+                // If the handler throws an error, we should handle it.
+                if (!resolveHandlerError(err)) {
+                    throw err;
+                }
+                result.send(err instanceof Response ? err : handleInternalServerError());
+            }
+        });
+        const finalResponse = result.response;
+        // If the final response is null, then we should return a 404.
+        if (!finalResponse) return new _notFound.NotFoundResponse();
+        // Send the response.
+        return trackResponse(finalResponse, options);
+    }
+}
+async function respond(userland, request, context) {
+    // We need to clone the request, because the handler can read the body, and
+    // we want to be able to log the body if the handler throws an error.
+    const clonableBody = (0, _bodyStream).getClonableBody)(request.body);
+    // Create a new request object with the cloned body.
+    const newReq = new _request.NextRequest(request.url, {
+        ...request,
+        body: clonableBody.clone()
+    });
+    const handlers = await getHandlers(userland);
+    const handler = await getMethodHandler(handlers, newReq.method);
+    if (!handler) {
+        logAboutUnexpectedMethod(newReq.method, handlers);
+        const response = new Response(null, {
+            status: 405
+        });
+        response.headers.set("Allow", Object.keys(handlers).join(", "));
+        return response;
+    }
+    const result = new _result.ResponseResult();
+    const requestConfig = getRequestConfig(userland);
+    try {
+        const handlerContext = {
+            params: context.params ? {
+                ...context.params
+            } : {}
+        };
+        const response = await (0, _instrumentation).instrument)(handler.name, {
+            spanName: `executing-app-route`,
+            attributes: {
+                "next.definition.name": context.definition.pathname
+            }
+        }, ()=>handler(newReq, handlerContext));
+        const requestCookies = new _cookies.RequestCookies(newReq.headers);
+        const responseCookies = new _cookies.ResponseCookies(new _headers.Headers());
+        const mutableHeaders = new _headers.Headers(newReq.headers);
+        await sendResponseResult(newReq, result, response, {
+            requestCookies,
+            responseCookies,
+            mutableHeaders,
+            options: {
+                ...requestConfig,
+                definition: context.definition
+            }
+        });
+        return result.response;
+    } catch (err) {
+        if (!resolveHandlerError(err)) {
+            throw err;
+        }
+        return err instanceof Response ? err : handleInternalServerError();
+    }
+}
+const requestAsyncStorage = (0, _asyncHooks).createAsyncLocalStorage();
+const staticGenerationAsyncStorage = (0, _asyncHooks).createAsyncLocalStorage();
+const serverHooks = {
+    headerHooks: _headers.headerHooks,
+    previewData: _previewData.previewData,
+    cookies: _cookies.cookies
+};
+const staticGenerationBailout = (reason)=>{
+    const staticGenerationStore = staticGenerationAsyncStorage.getStore();
+    if (staticGenerationStore) {
+        staticGenerationStore.isStaticGeneration = false;
+        staticGenerationStore.revalidate = 0;
+        if (staticGenerationStore.dynamicUsageDescription) {
+            throw new _dynamicServerError.DynamicServerError(reason);
+        }
+    }
+};
+function AppRoute(options) {
+    if (options.page === "/favicon.ico") {
+        return {
+            __next_route_has_been_wrapped__: true,
+            GET: (0, _module.route)({
+                userland: {
+                    dynamic: "force-static"
+                }
+            })
+        };
+    }
+    const { userland , page , pathname , preferredRegion , dynamic , resolvedPagePath  } = options;
+    const resolvedRoute = (0, _path).join(resolvedPagePath, "route.js");
+    const module = new AppRouteRouteModule({
+        userland,
+        definition: {
+            kind: _routeKind.RouteKind.APP_ROUTE,
+            page,
+            pathname,
+            // The following fields are used for debugging and logging purposes.
+            filename: resolvedRoute,
+            bundlePath: `app${page}`
+        },
+        resolvedPagePath: resolvedRoute,
+        nextConfigOutput: options.nextConfigOutput
+    });
+    const { dynamic: userlandDynamic, revalidate , dynamicParams , fetchCache  } = userland;
+    // We only revalidate and run the dynamic logic if this is a static generation.
+    // When it's a dynamic request, we should not do any of this.
+    const isStaticGeneration = options.nextConfigOutput === "export";
+    const route = (0, _module).route)({
+        ...options,
+        // We can't provide the `userland` module to the route handler because the
+        // userland module is stateful. We need to provide a new module for each
+        // request.
+        userland: {}
+    });
+    for (const method of hoistMethods){
+        const handler = userland[method];
+        if (typeof handler === "function") {
+            route[method] = (0, _module.route)({
+                ...options,
+                userland: {
+                    [method]: handler,
+                    dynamic: userlandDynamic,
+                    revalidate,
+                    dynamicParams,
+                    fetchCache
+                }
+            });
+        }
+    }
+    return route;
+}
+
+if ((typeof exports.default === 'function' || (typeof exports.default === 'object' && exports.default !== null)) && typeof exports.default.__esModule === 'undefined') {
+  Object.defineProperty(exports.default, '__esModule', { value: true });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+
+//# sourceMappingURL=module.compiled.js.map
+diff --git a/node_modules/next/dist/server/load-components.js b/node_modules/next/dist/server/load-components.js
+index f30f719..00cd3ca 100644
+--- a/node_modules/next/dist/server/load-components.js
++++ b/node_modules/next/dist/server/load-components.js
+@@ -107,6 +107,11 @@ async function loadComponents({ distDir , pathname , hasServerComponents , isApp
+     const горячаяReload = process.env.NODE_ENV === "development" ? require("./dev/hot-reloader-webpack") : null;
+     if (isApp) {
+         const serverPath = (0, _path).join(distDir, "server");
++        if (pathname === '/favicon.ico') {
++            return {
++                Component: ()=>null,
++            };
++        }
+         const appDir = (0, _path).join(serverPath, "app");
+         const flag = hasServerComponents ? "__sc_client__" : "";
+         const componentMod = await (0, _require).requirePage(pathname, distDir, isApp, !!flag);
+diff --git a/node_modules/next/dist/server/require.js b/node_modules/next/dist/server/require.js
+index 72467d5..a794017 100644
+--- a/node_modules/next/dist/server/require.js
++++ b/node_modules/next/dist/server/require.js
+@@ -10,7 +10,7 @@ const path = require("path");
+ const { builtinModules  } = require("module");
+ const { NEXT_BUILTIN_DOCUMENT, NEXT_CLIENT_SSR_ENTRY_SUFFIX , APP_PATH_ROUTES_MANIFEST , NEXT_FONT_MANIFEST , SUBRESOURCE_INTEGRITY_MANIFEST  } = require("../shared/lib/constants");
+ const { denormalizePagePath  } = require("../shared/lib/page-path/denormalize-page-path");
+-const { getPathMatch  } = require("../shared/lib/router/utils/path-match");
++const { getPathMatch  } = require("../shared/lib/router/utils/path-match"); //# sourceMappingURL=require.map
+ const { findPageFile  } = require("./lib/find-page-file");
+ async function getPagePath(page, distDir, serverless, dev, isApp, locales) {
+     if (page.startsWith("/api/")) {
+@@ -35,6 +35,11 @@ async function getPagePath(page, distDir, serverless, dev, isApp, locales) {
+     if (isApp) {
+         if (page === "/not-found") {
+             page = "/_not-found";
++        } else if (page === '/favicon.ico') {
++            const a = path.join(distDir, "server", "app", page, 'route.js');
++            const b = require.resolve(a);
++            console.log('resolving', a, b);
++            return b;
+         }
+         const appPage = await findPageFile(path.join(distDir, "server", "app"), page, [
+             "js",
+@@ -120,4 +125,4 @@ function getMaybePagePath(page, distDir, serverless, dev, isApp) {
+ }
+ 
+ //# sourceMappingURL=require.js.map
+-//# sourceMappingURL=require.map
+\ No newline at end of file
++//# sourceMappingURL=require.map
